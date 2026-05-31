@@ -7,7 +7,7 @@ const FETCH_USER_APPS_ENDPOINT = 'https://backapi.rustore.ru/applicationData/ret
 // 🔐 НАСТРОЙКИ ТОКЕНОВ
 const AUTH_TOKEN = process.env.RUSTORE_TOKEN;
 const TELEGRAM_BOT_TOKEN = '8719192581:AAH8eQfyWHjZaLTvaGFeOQI-2LkGLLivNPk'; 
-const TELEGRAM_CHAT_ID = '1004234492621'; // Должен начинаться с -100
+const TELEGRAM_CHAT_ID = '@rusotorestatsmy'; // Должен начинаться с -100
 
 // Вспомогательная функция для паузы
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
