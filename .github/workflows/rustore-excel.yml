@@ -1,0 +1,27 @@
+name: Выгрузка Excel RuStore
+
+on:
+  schedule:
+    # Запуск каждый понедельник в 09:00 (по UTC)
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Кнопка для ручного запуска
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Скачиваем файлы из репозитория
+        uses: actions/checkout@v3
+
+      - name: Устанавливаем Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Устанавливаем библиотеки
+        run: npm install
+
+      - name: Запускаем скрипт
+        env:
+          RUSTORE_TOKEN: ${{ secrets.RUSTORE_TOKEN }}
+        run: node report.js
