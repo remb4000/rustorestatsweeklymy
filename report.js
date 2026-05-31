@@ -4,11 +4,11 @@ import fs from 'fs';
 const FETCH_USER_APPS_ENDPOINT = 'https://backapi.rustore.ru/applicationData/retrieveUserApps?pagination=false';
 
 // 🔐 НАСТРОЙКИ
-const AUTH_TOKEN = process.env.RUSTORE_TOKEN || 'ТВОЙ_RUSTORE_TOKEN';
+const AUTH_TOKEN = process.env.RUSTORE_TOKEN ;
 const TELEGRAM_BOT_TOKEN = '8719192581:AAH8eQfyWHjZaLTvaGFeOQI-2LkGLLivNPk'; 
 const TELEGRAM_CHAT_ID = '@rusotorestatsmy'; 
 
-// ⏳ УМНЫЕ ПАУЗЫ (Защита от бана 429)
+// ⏳ УМНЫЕ ПАУЗЫ
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const randomDelay = (min, max) => new Promise(resolve => setTimeout(resolve, Math.floor(Math.random() * (max - min + 1)) + min));
 
@@ -17,6 +17,10 @@ const CURRENT_YEAR = now.getFullYear();
 const CURRENT_MONTH = now.getMonth() + 1; 
 const lastDay = new Date(CURRENT_YEAR, CURRENT_MONTH, 0).getDate();
 const monthStr = String(CURRENT_MONTH).padStart(2, '0');
+
+// 🔥 Точка отсечения (Первое число текущего месяца)
+// Чеки старше этой даты мы качать не будем!
+const startOfCurrentMonth = new Date(CURRENT_YEAR, CURRENT_MONTH - 1, 1);
 
 const PERIOD_LABELS = [
     `01.${monthStr}-07.${monthStr}`,
@@ -41,7 +45,7 @@ const getAllApps = async (attempts = 3) => {
     }
 };
 
-// 2️⃣ СКАЧИВАНИЕ ЧЕКОВ С ЗАЩИТОЙ ОТ 429
+// 2️⃣ СКАЧИВАНИЕ ЧЕКОВ С ОСТАНОВКОЙ НА ПРОШЛОМ МЕСЯЦЕ
 const getAppInvoices = async (appId, appName, attempts = 5) => {
     let allInvoices = [];
     let page = 0;
@@ -55,19 +59,16 @@ const getAppInvoices = async (appId, appName, attempts = 5) => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_TOKEN },
             });
             
-            // 🔥 ЛОВИМ 429 ОШИБКУ И УХОДИМ В ДОЛГИЙ СОН
+            // 🛑 ЖЕСТКАЯ ПАУЗА ПРИ 429
             if (response.status === 429) {
-                console.warn(`\n🛑 RuStore просит притормозить (Код 429). Ждем 10 секунд...`);
-                await delay(10000); // Штрафная пауза 10 секунд
+                console.warn(`\n🛑 RuStore ругается (Код 429). Уходим в спячку на 35 секунд...`);
+                await delay(35000); // 35 секунд штрафа (наверняка)
                 throw new Error('Rate Limited');
             }
 
             if (!response.ok) {
                 const errText = await response.text();
                 console.error(`\n❌ ОШИБКА СЕРВЕРА ДЛЯ "${appName}": Код ${response.status}`);
-                if (response.status === 401 || response.status === 403) {
-                    console.error('👉 ВЕРОЯТНАЯ ПРИЧИНА: Токен RuStore протух!\n');
-                }
                 throw new Error(`HTTP ${response.status}`);
             }
 
@@ -75,16 +76,25 @@ const getAppInvoices = async (appId, appName, attempts = 5) => {
             
             if (data.invoices && data.invoices.length > 0) {
                 allInvoices = allInvoices.concat(data.invoices);
+                
+                // 🧠 УМНЫЙ ТОРМОЗ: Проверяем дату ПОСЛЕДНЕГО чека на странице
+                const oldestInvoiceOnPage = new Date(data.invoices[data.invoices.length - 1].invoice_date);
+                if (oldestInvoiceOnPage < startOfCurrentMonth) {
+                    console.log(`   ⏭️ Дошли до старых чеков (${oldestInvoiceOnPage.toLocaleDateString()}). Останавливаем загрузку истории.`);
+                    break; // Выходим из цикла while, дальше качать страницы не нужно!
+                }
             }
             
             totalPages = data.totalPages || 1;
             page++;
             
-            // Плавающая пауза между страницами одной игры
-            await randomDelay(1000, 2000); 
+            // Пауза между страницами (если у игры много транзакций в ЭТОМ месяце)
+            if (page < totalPages) {
+                await randomDelay(1500, 2500); 
+            }
             
         } catch (error) {
-            if (attempts <= 1) return []; // Сдаемся после 5 попыток
+            if (attempts <= 1) return []; 
             console.log(`⚠️ Повторная попытка скачивания... (осталось попыток: ${attempts - 1})`);
             return getAppInvoices(appId, appName, attempts - 1);
         }
@@ -114,7 +124,7 @@ const sendExcelToTelegram = async (filePath, fileName) => {
 
 // 🚀 ГЛАВНАЯ ФУНКЦИЯ
 const runReport = async () => {
-    console.log('🔄 Начинаем аккуратное скачивание чеков...');
+    console.log('🔄 Начинаем быстрый и безопасный сбор чеков...');
     const apps = await getAllApps();
     
     if (apps.length === 0) {
@@ -135,7 +145,6 @@ const runReport = async () => {
 
         const invoices = await getAppInvoices(app.appId, app.appName);
         
-        console.log(`   📥 Всего скачано чеков (за всё время): ${invoices.length}`);
         let validThisMonth = 0;
 
         for (const invoice of invoices) {
@@ -156,7 +165,7 @@ const runReport = async () => {
             validThisMonth++;
         }
 
-        console.log(`   ✅ Из них успешных за этот месяц: ${validThisMonth}`);
+        console.log(`   ✅ Обработано успешных чеков за этот месяц: ${validThisMonth}`);
         if (validThisMonth > 0) {
             console.log(`   💰 Сумма за месяц: ${totalIncome.toFixed(2)} ₽`);
         }
@@ -170,7 +179,7 @@ const runReport = async () => {
             parseFloat(totalIncome.toFixed(2))
         ]);
         
-        // 🔥 ПЛАВАЮЩАЯ ПАУЗА ОТ 2 ДО 4 СЕКУНД МЕЖДУ ИГРАМИ
+        // Пауза перед следующей игрой
         await randomDelay(2000, 4000); 
     }
 
